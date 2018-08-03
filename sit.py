@@ -85,8 +85,7 @@ def error_exit(code, msg):
     exit(code)
     
 def connect(dsn=c.DSN, usr=c.USER, pwd=c.PASSWORD):
-  """Соединение с Oracle"""
-  # Соединение с БД. 
+  """Connect to Oracle"""
   odbc_connect_string = 'DSN=%s;UID=%s;PWD=%s' %\
      (dsn, usr, pwd)
   conn = pyodbc.connect(odbc_connect_string)
