@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- 
 """
 Utility for 
-  - gettubg Siron AML text files from database tables or views.
+  - Siron AML text files creation from database tables or views.
   - data cleansing according to data supply requirements
   - AML scoring running
   - KYC scoring running
