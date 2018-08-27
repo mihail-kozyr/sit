@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- 
 """
 Utility for 
-  - Siron AML text files creation from database tables or views.
+  - gettubg Siron AML text files from database tables or views.
   - data cleansing according to data supply requirements
   - AML scoring running
   - KYC scoring running
@@ -85,7 +85,8 @@ def error_exit(code, msg):
     exit(code)
     
 def connect(dsn=c.DSN, usr=c.USER, pwd=c.PASSWORD):
-  """Connect to Oracle"""
+  """Соединение с Oracle"""
+  # Соединение с БД. 
   odbc_connect_string = 'DSN=%s;UID=%s;PWD=%s' %\
      (dsn, usr, pwd)
   conn = pyodbc.connect(odbc_connect_string)
@@ -549,7 +550,7 @@ def unload_scoring(start='', end=''):
         #where += "TO_DATE('"+start.strftime('%Y-%m-%d')+"', 'YYYY-MM-DD')"\
         #  " AND TO_DATE('"+ end.strftime('%Y-%m-%d')+" 23:59:59', 'YYYY-MM-DD HH24:MI:SS')"
         
-        where += "entrydate >= TO_DATE('"+start.strftime('%Y-%m-%d')+"', 'YYYY-MM-DD')"
+        where += "entrydate BETWEEN TO_DATE('"+start.strftime('%Y-%m-%d')+"', 'YYYY-MM-DD') AND TO_DATE('"+c.now_date.strftime('%Y-%m-%d')+" 23:59:59', 'YYYY-MM-DD hh24:mi:ss')"
         
         if args.custdelta:     
             where_last_scoring = ''
