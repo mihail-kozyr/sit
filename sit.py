@@ -14,9 +14,9 @@ OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
 
 """
 
-__author__ = "Mihail Kozyr (mihail.kozyr@gmail.com)"
-__version__ = "$Revision: 1.7 $"
-__date__ = "$Date: 2018/06/01 19:15:19 $"
+__author__ = "Mihail Kozyr (mihail.kozyr@gmail.com), Sergey Rhyzhov"
+__version__ = "$Revision: 1.0 $"
+__date__ = "$Date: 2015/12/09 19:15:19 $"
 
 import logging
 import codecs
@@ -33,7 +33,7 @@ import zipfile
 import pyodbc
 
 import config as c
-logfile='sit_' + c.now + '.log'
+logfile='unloader_' + c.now + '.log'
 logging.basicConfig(level=c.LOG_LEVEL, filename=logfile, format=c.LOG_FORMAT)
 #logging.basicConfig(level=c.LOG_LEVEL, format=c.LOG_FORMAT)
 log = logging.getLogger(__name__)
@@ -84,13 +84,13 @@ def error_exit(code, msg):
     print("See log files for the details")
     exit(code)
     
-def connect(dsn=c.DSN, usr=c.USER, pwd=c.PASSWORD):
-  """Соединение с Oracle"""
+def connect(drv=c.DRIVER, srv=c.SERVER, db=c.DATABASE, usr=c.USER, pwd=c.PASSWORD):
+  """Соединение с MS SQL Server"""
   # Соединение с БД. 
-  odbc_connect_string = 'DSN=%s;UID=%s;PWD=%s' %\
-     (dsn, usr, pwd)
+  odbc_connect_string = 'DRIVER={%s};SERVER=%s;DATABASE=%s;UID=%s;PWD=%s' %\
+     (drv, srv, db, usr, pwd)
   conn = pyodbc.connect(odbc_connect_string)
-  conn.execute('alter session set nls_sort=binary')
+  #conn.execute('alter session set nls_sort=binary')
   return conn
   
 def ResultIter(cursor, arraysize=1000):
@@ -216,8 +216,8 @@ class SironFile:
                 #field_value = self.date_ctrl(field_value, field_name, custid)
             elif data_type == 'number':
                 field_value = "{0: >-17.2f}".format(field_value)
-                #if field_value.find('-') > 0:
-                #    field_value = '-'+field_value.replace('-', '')
+                if field_value.find('-') > 0:
+                    field_value = '-'+field_value.replace('-', '')
             elif data_type == 'char':
                 field_value = self.len_ctrl(field_name,\
                                             field_value,\
@@ -429,340 +429,303 @@ def network_share_auth(share, username=None, password=None, drive_letter='S'):
 
 
 def insert_scoring_step(cur, name, scorid):
-    """ Вспомогательная функция для записи в журнал """ 
-    stmt = "SELECT scoring_step_seq.nextval FROM sys.dual"  
-    cur.execute(stmt)
-    row = cur.fetchone()
-    scoring_step_id = row[0]   
-    stmt = "insert into SCORING_STEP (SCORING_ID, STEP_ID, NAME, RESULT) \
-        VALUES(?, ?, ?, 'RUNNING')"
+    """ Вспомогательная функция для записи в журнал """    
+    stmt = "insert into LOGGING.SCORING_STEP (SCORING_ID, NAME, RESULT) \
+        VALUES(%s, '%s', 'RUNNING')" % (str(scorid), name)
     log.debug(stmt)
-    cur.execute(stmt, scorid, scoring_step_id, name)
+    cur.execute(stmt)
+    cur.execute("SELECT SCOPE_IDENTITY()")
+    row = cur.fetchone()
+    scoring_step_id = row[0]
     cur.commit()    
     return scoring_step_id
         
 def update_scoring_step(cur, res, stepid):
     """ Вспомогательная функция для записи в журнал """
-    stmt = "update SCORING_STEP SET RESULT = '%s', \
+    stmt = "update LOGGING.SCORING_STEP SET RESULT = '%s', \
         STEP_END=CURRENT_TIMESTAMP \
         WHERE STEP_ID = %s" % (res, stepid)
     cur.execute(stmt)
     cur.commit()
-
+    
 def unload_scoring(start='', end=''):
-    try:
-        parser = argparse.ArgumentParser()
-        parser.add_argument("-cd", "--custdelta", action="store_true",\
-                        help="Daily delta for customers ")
-        parser.add_argument("-cdd", "--custdeltaday", action="store",\
-                        help="The date for customer delta scoring in YYYYMMDD\
-                              format. The day from which the changed and added\
-                              customers should be unloaded from DB, by default:\
-                              the last scoring day.")
-        parser.add_argument("-cbs", action="store_true",\
-                        help="Syncronize staging with Core Banking System")
-        parser.add_argument("-s", action="append",\
-                        help="Scoring(s) to run. Usage: -s {AML|KYC|BO|ALL|NONE}. Default: NONE")
-        parser.add_argument("-f", action="append",\
-                        help="File(s) to unload. Usage: -f {CUSTOMER|ACCOUNT|TRANSACTION|CSM|COUNTRY|POD|BO|ALL|NONE}. Default=ALL")
-        parser.add_argument("-tsd", action="store",\
-                        help="Transaction start date in YYYYMMDD format mask. Default: first day of current month.")
-        parser.add_argument("-ted", action="store",\
-                        help="Transaction end date in YYYYMMDD format mask. Default: last day of current month.")
-        parser.add_argument("-z", "--zip", action="store_true",\
-                        help="Zipping old IN_*.TXT files to zip arcive input_<DATE>.zip .")
-                            
-        args = parser.parse_args()
-        
-       
-        if args.s == None:
-           scorings=['NONE']
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-cd", "--custdelta", action="store_true",\
+                    help="Daily delta for customers ")
+    parser.add_argument("-cdd", "--custdeltaday", action="store",\
+                    help="The date for customer delta scoring in YYYYMMDD\
+                          format. The day from which the changed and added\
+                          customers should be unloaded from DB, by default:\
+                          the last scoring day.")
+    parser.add_argument("-s", action="append",\
+                    help="Scoring(s) to run. Usage: -s {AML|KYC|BO|ALL|NONE}. Default: NONE")
+    parser.add_argument("-f", action="append",\
+                    help="File(s) to unload. Usage: -f {CUSTOMER|ACCOUNT|TRANSACTION|CSM|COUNTRY|POD|BO|ALL|NONE}. Default=ALL")
+    parser.add_argument("-tsd", action="store",\
+                    help="Transaction start date in YYYYMMDD format mask. Default: first day of current month.")
+    parser.add_argument("-ted", action="store",\
+                    help="Transaction end date in YYYYMMDD format mask. Default: last day of current month.")
+    parser.add_argument("-z", "--zip", action="store_true",\
+                    help="Zipping old IN_*.TXT files to zip arcive input_<DATE>.zip .")
+                        
+    args = parser.parse_args()
+    
+    if args.s == None:
+       scorings=['NONE']
+    else:
+      scorings = [s.upper() for s in args.s]
+      
+    if args.f == None:
+       files_to_unload = ['ALL']
+    else:
+      files_to_unload = [f.upper() for f in args.f]
+
+    for scoring in scorings:
+        if (scoring not in ['AML', 'KYC', 'NONE', 'ALL', 'BO']):
+            print('Unknown type of scoring: ' + scoring)
+            print('Usage: -s {AML|KYC|BO|ALL|NONE}')
+            raise
+
+    errors = 0
+    now = c.now
+    # если параметры с интервалом дат не заданы,
+    # определяем start и end как 1-й и последний день текущего месяца
+    if start == '':
+        if args.tsd == None or args.ted == None:
+            start=c.now_date
+            start = datetime.date(start.year, start.month, 1)
+            end=last_day(c.now_date)
         else:
-          scorings = [s.upper() for s in args.s]
+            start = datetime.datetime.strptime(args.tsd, '%Y%m%d').date()
+            end = datetime.datetime.strptime(args.ted, '%Y%m%d').date()
+    
+    #start = datetime.date(2014, 11, 1)
+    #end = datetime.date(2014, 11, 30)
+
+    if args.custdelta:
+       last_scoring_date = ''
+       #Load last scoring date or get it from the parameter
+       if args.custdeltaday == None:
+           with open(c.LAST_SCORING_DATE_FILE, "r") as f:
+               last_scoring_date = f.readline().strip()
+       else:
+           last_scoring_date=args.custdeltaday
+    
+    print_header()    
+    # Пишем в журнал загрузки. Отдельное соединение с БД.
+    # Scoring
+    logconn = connect(srv=c.LOG_SERVER, db=c.LOG_DATABASE, usr=c.LOG_USER,\
+        pwd=c.LOG_PASSWORD)
         
-        if args.f == None:
-           files_to_unload = ['ALL']
-        else:
-          files_to_unload = [f.upper() for f in args.f]
+    stmt = "insert into LOGGING.SCORING (COMMENTS) VALUES('Run by unloader.py')"
+    logcursor = logconn.cursor()
+    logcursor.execute(stmt)
+    logcursor.execute("SELECT SCOPE_IDENTITY()")
+    row = logcursor.fetchone()
+    scoring_id = row[0]
+    logcursor.commit()
+
+    # Step
+    scoring_step_id = insert_scoring_step(logcursor, 'EXTRACT_DS_FILES',\
+        scoring_id)
+   
+    # формируем фразу WHERE
+    where = 'WHERE '
+    where += 'transtimestamp BETWEEN '
+    where += "'"+start.strftime('%Y-%m-%d')+"'"\
+      " AND '"+ end.strftime('%Y-%m-%d')+" 23:59:59'"
+
+    if args.custdelta:     
+        where_last_scoring = ''
+        if last_scoring_date:
+            where_last_scoring = "WHERE ChangeDate > " + "CAST('" + last_scoring_date + "' AS DATETIME)"
+    
+    if files_to_unload != ['NONE']:
+        print('*******************************************************************************')
+        print('*******  Unload Siron Data Supply files from the database                ******')
+        print('*******************************************************************************')
+
+        if args.zip:
+            print('Step ZIP       - Back up old files to archive input_%s.zip'%(now))
+            # Create archive
+            zipFileName = 'input_' + now + '.zip'
+            zf = zipfile.ZipFile(zipFileName, mode='a', compression=zipfile.ZIP_DEFLATED)
+            
+            files = glob.iglob(os.path.join('.', "in_*.txt"))         
+            for file in files:
+                # Add file to archive
+                log.debug('Add file ' + file + ' to archive')
+                zf.write(file)
+                
+            zf.close()
         
-        for scoring in scorings:
-            if (scoring not in ['AML', 'KYC', 'NONE', 'ALL', 'BO']):
-                print('Unknown type of scoring: ' + scoring)
-                print('Usage: -s {AML|KYC|BO|ALL|NONE}')
-                raise
-        
-        errors = 0
-        now = c.now
-        # если параметры с интервалом дат не заданы,
-        # определяем start и end как 1-й и последний день текущего месяца
-        if start == '':
-            if args.tsd == None or args.ted == None:
-                start=c.now_date
-                start = datetime.date(start.year, start.month, 1)
-                end=last_day(c.now_date)
-            else:
-                start = datetime.datetime.strptime(args.tsd, '%Y%m%d').date()
-                end = datetime.datetime.strptime(args.ted, '%Y%m%d').date()
-        
-        #start = datetime.date(2014, 11, 1)
-        #end = datetime.date(2014, 11, 30)
+    if 'CSM' in files_to_unload or 'ALL' in files_to_unload:
+        fname = 'in_cust_serv_manager.txt'
+        print('Step CSM       - Unloading Cust. Service Managers to '+fname)
+        csm = SironFixedLengthFile(fname)
+        errors += csm.unload()
+
+    if 'COUNTRY' in files_to_unload or 'ALL' in files_to_unload:
+        fname = 'in_country.txt'
+        print('Step CNTR      - Unloading Countries reference to '+fname)
+        cntry = SironFixedLengthFile(fname)
+        errors += cntry.unload()
+
+    if 'CUSTOMER' in files_to_unload or 'ALL' in files_to_unload:
+        sel = c.IN_CUSTOMER_QUERY
         
         if args.custdelta:
-           last_scoring_date = ''
-           #Load last scoring date or get it from the parameter
-           if args.custdeltaday == None:
-               with open(c.LAST_SCORING_DATE_FILE, "r") as f:
-                   last_scoring_date = f.readline().strip()
+            sel=sel.replace('WHERE 1=1', where_last_scoring)
+            delta_char = 'D'
+        else: 
+            delta_char = ' '
+            
+        fname = 'in_customer.txt'
+        print('Step CST%s      - Unloading Customers to %s'%(delta_char, fname))
+        cust = SironFixedLengthFile(fname, query=sel)
+        errors += cust.unload()
+    
+        sel = c.IN_CUSTOMER_EXTENSION_NOHIST_QUERY
+        if args.custdelta:
+            sel=sel.replace('WHERE 1=1', where_last_scoring)
+        
+        fname='in_customer_extension_nohist.txt'
+        print('Step CSTEN%s    - Unloading Customers to %s'%(delta_char, fname))
+        cust_e2 = SironCSVFile(fname, query=sel)
+        errors += cust_e2.unload()
+    
+    
+    if 'ACCOUNT' in files_to_unload or 'ALL' in files_to_unload:
+        fname = 'in_account.txt'
+        print('Step ACC        - Unloading Accounts to' + fname)
+        acc = SironFixedLengthFile(fname)
+        errors += acc.unload()
+        
+        fname = 'in_account_extension_nohist.txt'
+        print('Step ACCENH     - Unloading Accounts Extension Nohist to' + fname)
+        acc_e1 = SironCSVFile(fname)
+        errors += acc_e1.unload()
+
+    if 'POD' in files_to_unload or 'ALL' in files_to_unload:
+        fname = 'in_power_of_disposal.txt'
+        print('Step POD        - Unloading PODs to ' + fname)
+        pod = SironFixedLengthFile(fname)
+        errors += pod.unload()
+    
+    if 'BO' in files_to_unload or 'ALL' in files_to_unload:
+        fname = 'in_beneficial_owner.txt'
+        print('Step BO        - Unloading Beneficial Owners to ' + fname)
+        rel = SironCSVFile(fname)
+        rel.chars_to_clean = '\n'
+        errors += rel.unload()
+   
+    if 'TRANSACTION' in files_to_unload or 'ALL' in files_to_unload:
+        fname = 'in_transaction.txt'
+        print('Step TRX        - Unloading Transactions to ' + fname)
+        sel = c.IN_TRANSACTION_QUERY
+        sel=sel.replace('WHERE 1=1', where)
+        trx = SironFixedLengthFile(fname, query=sel)
+        errors += trx.unload()
+    
+
+    if errors == 0: 
+        if (scorings != ['NONE'] and files_to_unload != ['NONE']):
+           print('')
+           print('*******************************************************************************')
+           print('*******  Run loading and scoring processes                               ******')
+           print('*******************************************************************************')            
+           #update_scoring_step(logcursor, "SUCCESS", scoring_step_id)
+           # Копируем выгрузки AML, KYC in_*.txt в input каталог"""
+           print('Step COPF      - Copy data supply files to data/input folder ')
+           files = glob.iglob(os.path.join('.', "in_*.txt"))         
+           for full_filename in files:
+               filename = os.path.basename(full_filename)
+               shutil.copy2(full_filename, c.AML_INPUT_DIR)
+               if 'KYC' in scorings or scorings == ['ALL']:
+                  if filename[0:11] == 'in_customer':
+                    log.debug('Customer file found: ' + filename)
+                    shutil.copy2(full_filename, c.KYC_INPUT_DIR)
+
+        # скоринг KYC
+        if 'KYC' in scorings or 'ALL' in scorings:
+           print('Step KYCS      - Run batch scoring of Siron KYC')
+           scoring_logfile='scoringKYC_' + start.strftime('%Y%m%d') + '.log'
+           
+           scoring_step_id = insert_scoring_step(logcursor, 'SCORING_KYC',\
+               scoring_id)
+               
+           (status, output) = getstatusoutput('start_scoring_prs.bat', r'c:\TONBELLER\SironKYC\system\scoring\batch')
+           
+           #Сохраняем журнал скоринга KYC
+           with open(scoring_logfile, 'w') as f:
+               f.write('status='+str(status)+'\n')
+               f.write(output)                        
+           
+           if status == 0:
+               result = 'SUCCESS'
            else:
-               last_scoring_date=args.custdeltaday
-        
-        print_header()    
-        # Пишем в журнал загрузки. Отдельное соединение с БД.
-        # Scoring
-        logconn = connect(dsn=c.LOG_DSN,usr=c.LOG_USER, pwd=c.LOG_PASSWORD)
-        logcursor = logconn.cursor()
-        stmt = "SELECT aml_operator_seq.nextval FROM sys.dual"  
-        logcursor.execute(stmt)
-        row = logcursor.fetchone()
-        scoring_id = row[0]
-        stmt = "INSERT INTO aml_operator(runid, name, start_date, status) VALUES(?,?,SYSDATE,?)"
-        logcursor.execute(stmt, scoring_id, "sit.py", "EXECUTING")
-        logcursor.commit()
-        
-        if args.cbs:
-            try:
-                print('Step CBS       - Sync staging area and core banking system with ETL.MAIN')
-                stmt = 'begin etl.main; end;'
-                logcursor.execute(stmt)
-            except Exception as e:
-                stmt = "UPDATE aml_operator SET status = 'FAILED', end_date = SYSDATE WHERE runid = ?"
-                logcursor.execute(stmt, scoring_id)
-                logcursor.commit()
-                log.exception(str(e))
-                return -3
-                
+               result = 'FAILED'
+           update_scoring_step(logcursor, result, scoring_step_id)
+           
+           #Save to file last scoring datetime
+           if status == 0:
+               with open(c.LAST_SCORING_DATE_FILE, 'w') as f:
+                   score_date = c.now_date
+                   f.write(score_date.strftime('%Y-%m-%d %H:%M:%S'))
 
-        
-        # формируем фразу WHERE
-        where = 'WHERE '
-        
-        #where += 'entrydate BETWEEN '
-        #where += "TO_DATE('"+start.strftime('%Y-%m-%d')+"', 'YYYY-MM-DD')"\
-        #  " AND TO_DATE('"+ end.strftime('%Y-%m-%d')+" 23:59:59', 'YYYY-MM-DD HH24:MI:SS')"
-        
-        where += "entrydate BETWEEN TO_DATE('"+start.strftime('%Y-%m-%d')+"', 'YYYY-MM-DD') AND TO_DATE('"+c.now_date.strftime('%Y-%m-%d')+" 23:59:59', 'YYYY-MM-DD hh24:mi:ss')"
-        
-        if args.custdelta:     
-            where_last_scoring = ''
-            if last_scoring_date:
-                where_last_scoring = "WHERE ChangeDate > " + "CAST('" + last_scoring_date + "' AS DATETIME)"
-        
-        if files_to_unload != ['NONE']:
-            print('*******************************************************************************')
-            print('*******  Unload Siron Data Supply files from the database                ******')
-            print('*******************************************************************************')
-        
-            if args.zip:
-                print('Step ZIP       - Back up old files to archive input_%s.zip'%(now))
-                # Create archive
-                zipFileName = 'input_' + now + '.zip'
-                zf = zipfile.ZipFile(zipFileName, mode='a', compression=zipfile.ZIP_DEFLATED)
-                
-                files = glob.iglob(os.path.join('.', "in_*.txt"))         
-                for file in files:
-                    # Add file to archive
-                    log.debug('Add file ' + file + ' to archive')
-                    zf.write(file)
-                    
-                zf.close()
+        if 'BO' in scorings or 'ALL' in scorings:
+            print('Step BOL       - Loading beneficial owners')
             
-        if 'CSM' in files_to_unload or 'ALL' in files_to_unload:
-            fname = 'in_cust_serv_manager.txt'
-            print('Step CSM       - Unloading Cust. Service Managers to '+fname)
-            csm = SironFixedLengthFile(fname)
-            errors += csm.unload()
-        
-        if 'COUNTRY' in files_to_unload or 'ALL' in files_to_unload:
-            fname = 'in_country.txt'
-            print('Step CNTR      - Unloading Countries reference to '+fname)
-            cntry = SironFixedLengthFile(fname)
-            errors += cntry.unload()
-        
-        if 'CUSTOMER' in files_to_unload or 'ALL' in files_to_unload:
-            sel = c.IN_CUSTOMER_QUERY
+            scoring_logfile='relationAML_' + start.strftime('%Y%m%d') + '.log'
+            # Run relation of AML
+            scoring_step_id = insert_scoring_step(logcursor,'RELATION_AML',scoring_id)
+            (status, output) = getstatusoutput('start_update_relations.bat 0001 in_beneficial_owner.txt', r'C:\TONBELLER\SironAML\system\scoring\watchlist\batch')
+
+            # Save log of relation of AML
+            with open(scoring_logfile, 'w') as f:
+               f.write('status='+str(status)+'\n')
+               f.write(output)
             
-            if args.custdelta:
-                sel=sel.replace('WHERE 1=1', where_last_scoring)
-                delta_char = 'D'
-            else: 
-                delta_char = ' '
-                
-            fname = 'in_customer.txt'
-            print('Step CST%s      - Unloading Customers to %s'%(delta_char, fname))
-            cust = SironFixedLengthFile(fname, query=sel)
-            errors += cust.unload()
-        
-            sel = c.IN_CUSTOMER_EXTENSION_NOHIST_QUERY
-            if args.custdelta:
-                sel=sel.replace('WHERE 1=1', where_last_scoring)
-            
-            fname='in_customer_extension_nohist.txt'
-            print('Step CSTEN%s    - Unloading Customers to %s'%(delta_char, fname))
-            cust_e2 = SironCSVFile(fname, query=sel)
-            errors += cust_e2.unload()
-        
-        
-        if 'ACCOUNT' in files_to_unload or 'ALL' in files_to_unload:
-            fname = 'in_account.txt'
-            print('Step ACC       - Unloading Accounts to ' + fname)
-            acc = SironFixedLengthFile(fname)
-            errors += acc.unload()
-            
-            fname = 'in_account_extension_nohist.txt'
-            print('Step ACCENH    - Unloading Accounts Extension Nohist to ' + fname)
-            acc_e1 = SironCSVFile(fname)
-            errors += acc_e1.unload()
-        
-        if 'POD' in files_to_unload or 'ALL' in files_to_unload:
-            fname = 'in_power_of_disposal.txt'
-            print('Step POD       - Unloading PODs to ' + fname)
-            pod = SironFixedLengthFile(fname)
-            errors += pod.unload()
-        
-        if 'BO' in files_to_unload or 'ALL' in files_to_unload:
-            fname = 'in_beneficial_owner.txt'
-            print('Step BO        - Unloading Beneficial Owners to ' + fname)
-            rel = SironCSVFile(fname)
-            rel.chars_to_clean = '\r\n'
-            errors += rel.unload()
-        
-        if 'TRANSACTION' in files_to_unload or 'ALL' in files_to_unload:
-            fname = 'in_transaction.txt'
-            print('Step TRX       - Unloading Transactions to ' + fname)
-            sel = c.IN_TRANSACTION_QUERY
-            sel=sel.replace('WHERE 1=1', where)
-            trx = SironFixedLengthFile(fname, query=sel)
-            trx.chars_to_clean = '\r\n'
-            errors += trx.unload()
-            
-            fname = 'in_transaction_extension.txt'
-            print('Step TRX       - Unloading Transactions to ' + fname)
-            sel = c.IN_TRANSACTION_EXTENSION_QUERY
-            sel=sel.replace('WHERE 1=1', where)
-            trx = SironCSVFile(fname, query=sel)
-            errors += trx.unload()
-        
-        
-        if errors == 0: 
-            if (scorings != ['NONE'] and files_to_unload != ['NONE']):
-               print('')
-               print('*******************************************************************************')
-               print('*******  Run loading and scoring processes                               ******')
-               print('*******************************************************************************')            
-               #update_scoring_step(logcursor, "SUCCESS", scoring_step_id)
-               # Копируем выгрузки AML, KYC in_*.txt в input каталог"""
-               print('Step COPF      - Copy data supply files to data/input folder ')
-               files = glob.iglob(os.path.join('.', "in_*.txt"))         
-               for full_filename in files:
-                   filename = os.path.basename(full_filename)
-                   shutil.copy2(full_filename, c.AML_INPUT_DIR)
-                   if 'KYC' in scorings or scorings == ['ALL']:
-                      if filename[0:11] == 'in_customer':
-                        log.debug('Customer file found: ' + filename)
-                        shutil.copy2(full_filename, c.KYC_INPUT_DIR)
-        
-            # скоринг KYC
-            if 'KYC' in scorings or 'ALL' in scorings:
-               print('Step KYCS      - Run Siron KYC batch scoring')
-               scoring_logfile='scoringKYC_' + start.strftime('%Y%m%d') + '.log'
-               
-               scoring_step_id = insert_scoring_step(logcursor, 'SCORING_KYC',\
-                   scoring_id)
-                   
-               (status, output) = getstatusoutput('start_scoring_prs.bat', r'c:\TONBELLER\SironKYC\system\scoring\batch')
-               
-               #Сохраняем журнал скоринга KYC
-               with open(scoring_logfile, 'w') as f:
-                   f.write('status='+str(status)+'\n')
-                   f.write(output)                        
-               
-               if status == 0:
-                   result = 'SUCCESS'
-               else:
-                   result = 'FAILED'
+            if status == 0:
+               result = 'SUCCESS'
+               update_scoring_step(logcursor, result, scoring_step_id)            
+            else:
+               result = 'FAILED'
                update_scoring_step(logcursor, result, scoring_step_id)
-               
-               #Save to file last scoring datetime
-               if status == 0:
-                   with open(c.LAST_SCORING_DATE_FILE, 'w') as f:
-                       score_date = c.now_date
-                       f.write(score_date.strftime('%Y-%m-%d %H:%M:%S'))
-        
-            if 'BO' in scorings or 'ALL' in scorings:
-                print('Step BOL       - Loading beneficial owners')
-                
-                scoring_logfile='relationAML_' + start.strftime('%Y%m%d') + '.log'
-                # Run relation of AML
-                scoring_step_id = insert_scoring_step(logcursor,'RELATION_AML',scoring_id)
-                (status, output) = getstatusoutput('start_update_relations.bat 0001 in_beneficial_owner.txt', r'C:\TONBELLER\SironAML\system\scoring\watchlist\batch')
-        
-                # Save log of relation of AML
-                with open(scoring_logfile, 'w') as f:
-                   f.write('status='+str(status)+'\n')
-                   f.write(output)
-                
-                if status == 0:
-                   result = 'SUCCESS'
-                   update_scoring_step(logcursor, result, scoring_step_id)            
-                else:
-                   result = 'FAILED'
-                   update_scoring_step(logcursor, result, scoring_step_id)
-                           
-            if 'AML' in scorings or 'ALL' in scorings:
-               print('Step AMLS      - Run scoring of Siron AML')
-        
-               scoring_logfile='scoringAML_' + start.strftime('%Y%m%d') + '.log'
-               # Запускаем скоринг AML
-               scoring_step_id = insert_scoring_step(logcursor, 'SCORING_AML',
-                   scoring_id)
-               (status, output) = getstatusoutput('start_scoring.bat 0001', \
-                                            r'c:\TONBELLER\SironAML\system\scoring\batch')
-               
-               # Сохраняем журнал скоринга AML
-               with open(scoring_logfile, 'w') as f:
-                   f.write('status='+str(status)+'\n')
-                   f.write(output)
-               
-               if status == 0:
-                   result = 'SUCCESS'
-                   update_scoring_step(logcursor, result, scoring_step_id)            
-               else:
-                   result = 'FAILED'
-                   update_scoring_step(logcursor, result, scoring_step_id)
-                   return -2
-        else:
-            update_scoring_step(logcursor, "FAILED", scoring_step_id)
-            log.error('An error occured during unloading from the database. See details in ' + logfile)
-            #with open(scoring_logfile, 'w') as f:
-            #    f.write('An error occured during unloading from MS SQL Server. See details in ' + logfile)
-            return -1
-        stmt = "UPDATE aml_operator SET status = 'SUCCESS' , end_date = SYSDATE WHERE runid = ?"
-        logcursor.execute(stmt, scoring_id)
-        logcursor.commit()
-        return 0
-    except Exception as e:
-        log.exception(str(e))
-        result = -2
-        stmt = "UPDATE aml_operator SET status = 'FAILED' , end_date = SYSDATE WHERE runid = ?"
-        logcursor.execute(stmt, scoring_id)
-        logcursor.commit()
-        return result
+                       
+        if 'AML' in scorings or 'ALL' in scorings:
+           print('Step AMLS      - Run scoring of Siron AML')
 
+           scoring_logfile='scoringAML_' + start.strftime('%Y%m%d') + '.log'
+           # Запускаем скоринг AML
+           scoring_step_id = insert_scoring_step(logcursor, 'SCORING_AML',
+               scoring_id)
+           (status, output) = getstatusoutput('start_scoring.bat 0001 reset.bat', \
+                                        r'c:\TONBELLER\SironAML\system\scoring\batch')
+           
+           # Сохраняем журнал скоринга AML
+           with open(scoring_logfile, 'w') as f:
+               f.write('status='+str(status)+'\n')
+               f.write(output)
+           
+           if status == 0:
+               result = 'SUCCESS'
+               update_scoring_step(logcursor, result, scoring_step_id)            
+           else:
+               result = 'FAILED'
+               update_scoring_step(logcursor, result, scoring_step_id)
+               return -2
+    else:
+        update_scoring_step(logcursor, "FAILED", scoring_step_id)
+        log.error('An error occured during unloading from MS SQL Server. See details in ' + logfile)
+        #with open(scoring_logfile, 'w') as f:
+        #    f.write('An error occured during unloading from MS SQL Server. See details in ' + logfile)
+        return -1
+    return 0
 
 def main():
     result_codes = {-1: "File unloading failure",\
-                    -2: "Scoring failure",\
-                    -3: "CBS ETL failure"}
+                    -2: "Scoring failure"}
     #for m in range(8, 12):
     #    start_date = datetime.date(2015, m, 1)
     #    end_date = last_day(start_date)
@@ -783,9 +746,6 @@ def main():
 
 if __name__ == '__main__':
     try:
-        log.info("Started")
         main()
-        log.info("Finished")
     except Exception as e:
-        log.error("failed")
         log.exception(str(e))
